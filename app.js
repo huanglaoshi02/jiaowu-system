@@ -650,5 +650,53 @@ async function deletePlan(id) {
   } catch (e) { alert('删除失败：' + e.message); }
 }
 
+/* ================= 导出功能 ================= */
+function downloadCSV(filename, rows) {
+  const csv = '\ufeff' + rows.map(r => r.map(v => {
+    const s = String(v == null ? '' : v);
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }).join(',')).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
+}
+const WEEK_CN = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+function weekdayOf(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return isNaN(d.getTime()) ? '' : WEEK_CN[d.getDay()];
+}
+function exportCoursesCSV() {
+  const today = todayStr();
+  let list = state.courses.slice();
+  if (courseFilter === 'future') list = list.filter(c => c.course_date >= today);
+  list.sort((a, b) => (a.course_date + (a.start_time || '')).localeCompare(b.course_date + (b.start_time || '')));
+  if (!list.length) return alert('当前没有可导出的课程');
+  const rows = [['日期', '星期', '开始时间', '结束时间', '学生', '科目', '老师', '签到状态']];
+  list.forEach(c => {
+    const stu = studentById(c.student_id);
+    const att = attendanceOf(c.id);
+    rows.push([c.course_date, weekdayOf(c.course_date), fmtTime(c.start_time), fmtTime(c.end_time), stu ? stu.name : '', c.subject || '', c.teacher || '', att ? STATUS_NAMES[att.status] : '未签到']);
+  });
+  downloadCSV('课表_' + today + '.csv', rows);
+  alert('已导出 ' + list.length + ' 条课程，表格文件已下载（可用 Excel / WPS 打开）');
+}
+function exportAttendanceCSV() {
+  const date = $('#att-date').value || todayStr();
+  const recs = state.attendance.filter(a => a.course_date === date).sort((a, b) => (a.signed_at || '').localeCompare(b.signed_at || ''));
+  if (!recs.length) return alert('这一天没有签到记录');
+  const rows = [['日期', '学生', '科目', '签到状态', '签到时间']];
+  recs.forEach(a => {
+    const stu = studentById(a.student_id);
+    const c = state.courses.find(x => x.id === a.course_id);
+    rows.push([a.course_date, stu ? stu.name : '', c ? c.subject : '', STATUS_NAMES[a.status], a.signed_at ? a.signed_at.slice(0, 16).replace('T', ' ') : '']);
+  });
+  downloadCSV('签到记录_' + date + '.csv', rows);
+  alert('已导出 ' + recs.length + ' 条签到记录，表格文件已下载（可用 Excel / WPS 打开）');
+}
+
 /* ---------- 启动 ---------- */
 initAuth();

@@ -25,14 +25,23 @@ button { cursor: pointer; }
 
 /* ===== 主框架 ===== */
 #app-view { min-height: 100vh; }
-header { position: fixed; top: 0; left: 0; right: 0; z-index: 50; background: #2b6de8; color: #fff; display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; }
+header { position: fixed; top: 0; left: 0; right: 0; z-index: 60; height: 52px; background: #2b6de8; color: #fff; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
 .app-title { font-size: 18px; font-weight: 600; }
 .logout-btn { background: rgba(255,255,255,.2); color: #fff; border: none; border-radius: 8px; padding: 6px 12px; font-size: 13px; }
-main { padding: 64px 12px 76px; max-width: 720px; margin: 0 auto; }
-.bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 50; background: #fff; border-top: 1px solid #e5e7eb; display: flex; }
-.nav-btn { flex: 1; padding: 9px 0 10px; background: none; border: none; color: #888; font-size: 11px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+
+/* 左侧菜单栏 */
+.sidebar { position: fixed; top: 52px; left: 0; bottom: 0; z-index: 40; width: 190px; background: #fff; border-right: 1px solid #e5e7eb; padding: 12px 8px; display: flex; flex-direction: column; gap: 4px; }
+.nav-btn { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 10px; background: none; border: none; color: #555; font-size: 14px; width: 100%; text-align: left; }
 .nav-btn .ico { font-size: 20px; }
-.nav-btn.active { color: #2b6de8; font-weight: 600; }
+.nav-btn.active { background: #e8f0fe; color: #2b6de8; font-weight: 600; }
+main { margin-left: 190px; padding: 66px 16px 24px; max-width: 860px; }
+@media (max-width: 600px) {
+  header { height: 48px; }
+  .sidebar { top: 48px; width: 62px; padding: 10px 6px; }
+  .nav-btn { justify-content: center; padding: 15px 0; }
+  .nav-btn .txt { display: none; }
+  main { margin-left: 62px; padding: 60px 10px 20px; }
+}
 
 /* ===== 卡片与通用 ===== */
 .card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
@@ -147,6 +156,15 @@ input:focus, select:focus, textarea:focus { border-color: #2b6de8; }
     <button class="logout-btn" onclick="logout()">退出登录</button>
   </header>
 
+  <!-- 左侧菜单栏 -->
+  <nav class="sidebar">
+    <button class="nav-btn active" data-page="home" onclick="showPage('home')"><span class="ico">🏠</span><span class="txt">首页</span></button>
+    <button class="nav-btn" data-page="students" onclick="showPage('students')"><span class="ico">👦</span><span class="txt">学生档案</span></button>
+    <button class="nav-btn" data-page="courses" onclick="showPage('courses')"><span class="ico">📅</span><span class="txt">排课管理</span></button>
+    <button class="nav-btn" data-page="attendance" onclick="showPage('attendance')"><span class="ico">✅</span><span class="txt">签到管理</span></button>
+    <button class="nav-btn" data-page="plans" onclick="showPage('plans')"><span class="ico">📝</span><span class="txt">工作计划</span></button>
+  </nav>
+
   <main>
     <!-- 首页 -->
     <section id="page-home" class="page">
@@ -176,7 +194,10 @@ input:focus, select:focus, textarea:focus { border-color: #2b6de8; }
 
     <!-- 排课 -->
     <section id="page-courses" class="page" style="display:none">
-      <button class="btn btn-primary btn-block" onclick="openCourseForm()">＋ 添加课程</button>
+      <div class="toolbar">
+        <button class="btn btn-primary" style="flex:1" onclick="openCourseForm()">＋ 添加课程</button>
+        <button class="btn btn-gray" onclick="exportCoursesCSV()">⬇ 导出课表</button>
+      </div>
       <div class="tab-bar" style="margin-top:12px">
         <button class="tab active" id="tab-future" onclick="setCourseFilter('future')">未来课程</button>
         <button class="tab" id="tab-all" onclick="setCourseFilter('all')">全部课程</button>
@@ -188,6 +209,7 @@ input:focus, select:focus, textarea:focus { border-color: #2b6de8; }
     <section id="page-attendance" class="page" style="display:none">
       <div class="toolbar">
         <input type="date" id="att-date" value="" onchange="renderAttendance()">
+        <button class="btn btn-gray" onclick="exportAttendanceCSV()">⬇ 导出签到记录</button>
       </div>
       <div class="section-title" style="margin-top:0">✅ 当天上课 · 点击签到</div>
       <div id="att-list"></div>
@@ -206,14 +228,6 @@ input:focus, select:focus, textarea:focus { border-color: #2b6de8; }
       <div class="card"><div id="plan-done"></div></div>
     </section>
   </main>
-
-  <nav class="bottom-nav">
-    <button class="nav-btn active" data-page="home" onclick="showPage('home')"><span class="ico">🏠</span>首页</button>
-    <button class="nav-btn" data-page="students" onclick="showPage('students')"><span class="ico">👦</span>学生</button>
-    <button class="nav-btn" data-page="courses" onclick="showPage('courses')"><span class="ico">📅</span>排课</button>
-    <button class="nav-btn" data-page="attendance" onclick="showPage('attendance')"><span class="ico">✅</span>签到</button>
-    <button class="nav-btn" data-page="plans" onclick="showPage('plans')"><span class="ico">📝</span>计划</button>
-  </nav>
 </div>
 
 <!-- 弹窗 -->
