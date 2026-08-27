@@ -57,6 +57,22 @@ const CARE_TYPE_BADGE = { da: 'badge-purple', two: 'badge-blue', eight: 'badge-o
 const IMP_NAMES = { high: '高', medium: '中', low: '低' };
 const IMP_CLS = { high: 'badge-red', medium: 'badge-orange', low: 'badge-gray' };
 
+/* ---------- 2026 年官方节假日（国务院办公厅公布，自动标注） ---------- */
+const OFFICIAL_HOLIDAYS = {
+  '2026-01-01': { name: '元旦', type: 'festival' }, '2026-01-02': { name: '休', type: 'festival' }, '2026-01-03': { name: '休', type: 'festival' }, '2026-01-04': { name: '班', type: 'workday' },
+  '2026-02-14': { name: '班', type: 'workday' },
+  '2026-02-15': { name: '春节', type: 'festival' }, '2026-02-16': { name: '休', type: 'festival' }, '2026-02-17': { name: '休', type: 'festival' }, '2026-02-18': { name: '休', type: 'festival' }, '2026-02-19': { name: '休', type: 'festival' }, '2026-02-20': { name: '休', type: 'festival' }, '2026-02-21': { name: '休', type: 'festival' }, '2026-02-22': { name: '休', type: 'festival' }, '2026-02-23': { name: '休', type: 'festival' },
+  '2026-02-28': { name: '班', type: 'workday' },
+  '2026-04-04': { name: '清明节', type: 'festival' }, '2026-04-05': { name: '休', type: 'festival' }, '2026-04-06': { name: '休', type: 'festival' },
+  '2026-05-01': { name: '劳动节', type: 'festival' }, '2026-05-02': { name: '休', type: 'festival' }, '2026-05-03': { name: '休', type: 'festival' }, '2026-05-04': { name: '休', type: 'festival' }, '2026-05-05': { name: '休', type: 'festival' },
+  '2026-05-09': { name: '班', type: 'workday' },
+  '2026-06-19': { name: '端午节', type: 'festival' }, '2026-06-20': { name: '休', type: 'festival' }, '2026-06-21': { name: '休', type: 'festival' },
+  '2026-09-20': { name: '班', type: 'workday' },
+  '2026-09-25': { name: '中秋节', type: 'festival' }, '2026-09-26': { name: '休', type: 'festival' }, '2026-09-27': { name: '休', type: 'festival' },
+  '2026-10-01': { name: '国庆节', type: 'festival' }, '2026-10-02': { name: '休', type: 'festival' }, '2026-10-03': { name: '休', type: 'festival' }, '2026-10-04': { name: '休', type: 'festival' }, '2026-10-05': { name: '休', type: 'festival' }, '2026-10-06': { name: '休', type: 'festival' }, '2026-10-07': { name: '休', type: 'festival' },
+  '2026-10-10': { name: '班', type: 'workday' },
+};
+
 /* ---------- 状态 ---------- */
 const state = { students: [], courses: [], attendance: [], scores: [], plans: [], careStudents: [], careAttendance: [], holidays: [] };
 let courseFilter = 'future';
@@ -224,21 +240,39 @@ function renderCalendar() {
   for (let i = 0; i < firstDow; i++) html += '<div class="cal-cell" style="background:none"></div>';
   for (let d = 1; d <= daysInMonth; d++) {
     const ds = year + '-' + String(month + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
-    const hols = state.holidays.filter(h => h.date === ds);
+    const marks = holidayMarks(ds);
     const isToday = ds === today;
-    html += '<div class="cal-cell' + (isToday ? ' today' : '') + '"><div class="d">' + d + '</div>' +
-      hols.map(h => '<div class="' + (h.type === 'workday' ? 'work' : 'hol') + '">' + (h.type === 'workday' ? '班·' : '') + esc(h.name) + '</div>').join('') + '</div>';
+    const hasRest = marks.some(m => m.type === 'rest');
+    html += '<div class="cal-cell' + (isToday ? ' today' : '') + (hasRest ? ' rest-bg' : '') + '"><div class="d">' + d + '</div>' +
+      marks.map(m => {
+        const cls = m.type === 'workday' ? 'work' : m.type === 'rest' ? 'rest' : m.type === 'event' ? 'event' : 'hol';
+        return '<div class="' + cls + '">' + esc(m.name) + '</div>';
+      }).join('') + '</div>';
   }
   html += '</div>';
   $('#home-calendar').innerHTML = html;
 
-  // 本月节日清单
+  // 本月自定义记录（官方节假日自动标注，不在此列出）
   const prefix = year + '-' + String(month + 1).padStart(2, '0');
   const monthHols = state.holidays.filter(h => h.date.startsWith(prefix)).sort((a, b) => a.date.localeCompare(b.date));
+  const typeNames = { festival: ['节日', 'badge-red'], workday: ['调休补班', 'badge-orange'], rest: ['休息日', 'badge-purple'], event: ['事项', 'badge-blue'] };
   $('#home-holidays').innerHTML = !monthHols.length
-    ? '<div class="muted">本月暂无节日记录</div>'
-    : monthHols.map(h => '<div class="list-item" style="padding:6px 0"><div class="list-main"><span class="badge ' + (h.type === 'workday' ? 'badge-orange' : 'badge-red') + '">' + (h.type === 'workday' ? '调休补班' : '节日') + '</span> ' + esc(h.name) + ' <span class="muted">' + h.date.slice(5) + '</span></div>' +
-      '<button class="btn btn-danger btn-sm" onclick="deleteHoliday(' + h.id + ')">删</button></div>').join('');
+    ? '<div class="muted">本月暂无自定义记录（官方节假日已自动标注）</div>'
+    : monthHols.map(h => {
+      const tn = typeNames[h.type] || ['记录', 'badge-gray'];
+      return '<div class="list-item" style="padding:6px 0"><div class="list-main"><span class="badge ' + tn[1] + '">' + tn[0] + '</span> ' + esc(h.name) + ' <span class="muted">' + h.date.slice(5) + '</span></div>' +
+        '<button class="btn btn-danger btn-sm" onclick="deleteHoliday(' + h.id + ')">删</button></div>';
+    }).join('');
+}
+function holidayMarks(date) {
+  const marks = [];
+  const off = OFFICIAL_HOLIDAYS[date];
+  if (off) marks.push({ name: off.name, type: off.type, official: true });
+  state.holidays.filter(h => h.date === date).forEach(h => {
+    const dup = marks.find(m => m.name === h.name && m.type === h.type);
+    if (!dup) marks.push({ name: h.name, type: h.type, official: false });
+  });
+  return marks;
 }
 function calShift(n) {
   calMonth += n;
@@ -247,17 +281,19 @@ function calShift(n) {
   renderCalendar();
 }
 function openHolidayForm() {
-  openModal('添加节日 / 调休', `
+  openModal('添加日历记录', `
     <div class="form-grid">
       <div class="form-row"><label>日期 *</label><input id="h-date" type="date" value="${todayStr()}"></div>
       <div class="form-row"><label>类型</label>
         <select id="h-type">
           <option value="festival">节日</option>
           <option value="workday">调休补班（周末上班）</option>
+          <option value="rest">我的休息日（粉色）</option>
+          <option value="event">自定义事项（如：8人晚托）</option>
         </select>
       </div>
     </div>
-    <div class="form-row"><label>名称 *</label><input id="h-name" type="text" placeholder="如：中秋节"></div>
+    <div class="form-row"><label>名称 *</label><input id="h-name" type="text" placeholder="如：休息 / 8人晚托 / 家长会"></div>
     <button class="btn btn-primary btn-block" onclick="saveHoliday()">保存</button>
   `);
 }
@@ -804,7 +840,8 @@ function careSignRow(c, date) {
   return '<div class="course-row" style="align-items:flex-start;flex-wrap:wrap">' +
     '<div class="course-info" style="flex:1"><div class="list-title">' + esc(c.name) + ' <span class="badge ' + CARE_TYPE_BADGE[c.care_type] + '">' + CARE_TYPE_NAMES[c.care_type] + '</span></div>' +
     '<div class="list-sub">' + esc(c.school || '') + '</div></div>' +
-    '<div class="sign-btns" style="width:100%;margin-top:4px">' + btn('normal', '✅ 已到') + btn('leave', '💤 请假') + btn('absent', '🚫 未到') + '</div></div>';
+    '<div class="sign-btns" style="width:100%;margin-top:4px">' + btn('normal', '✅ 已到') + btn('leave', '💤 请假') + btn('absent', '🚫 未到') + '</div>' +
+    (att && att.signed_at ? '<div class="muted" style="width:100%">🕐 签到时间：' + att.signed_at.slice(11, 16) + '</div>' : '') + '</div>';
 }
 async function signCare(studentId, status) {
   const date = $('#care-date').value || todayStr();
@@ -818,6 +855,18 @@ async function signCare(studentId, status) {
     await loadAll();
     renderCare();
   } catch (e) { alert('签到失败：' + e.message); }
+}
+async function toggleCareTask(studentId, date, field) {
+  let rec = state.careAttendance.find(a => a.student_id === studentId && a.care_date === date);
+  try {
+    if (!rec) {
+      await api('care_attendance', { method: 'POST', body: { student_id: studentId, care_date: date, status: 'normal', [field]: true } });
+    } else {
+      await api('care_attendance?id=eq.' + rec.id, { method: 'PATCH', body: { [field]: !rec[field] } });
+    }
+    await loadAll();
+    openCareDetail(studentId);
+  } catch (e) { alert('操作失败：' + e.message); }
 }
 function openCareForm(id) {
   const c = id ? careById(id) : null;
@@ -869,10 +918,24 @@ async function deleteCare(id) {
 function openCareDetail(id) {
   const c = careById(id);
   if (!c) return;
+  const today = todayStr();
+  const todayRec = state.careAttendance.find(a => a.student_id === id && a.care_date === today);
+  const taskBtn = (field, label) => {
+    const done = !!(todayRec && todayRec[field]);
+    return '<button class="task-btn' + (done ? ' done' : '') + '" onclick="toggleCareTask(' + id + ', \'' + today + '\', \'' + field + '\')">' + label + (done ? ' ✓' : '') + '</button>';
+  };
   const recs = state.careAttendance.filter(a => a.student_id === id).sort((a, b) => (b.care_date || '').localeCompare(a.care_date || ''));
+  const tasksOf = a => {
+    const t = [];
+    if (a.homework_done) t.push('作业');
+    if (a.recite_done) t.push('背诵');
+    if (a.correction_done) t.push('错题');
+    return t.length ? t.join('·') : '';
+  };
   const monthRecs = recs.slice(0, 30).map(a =>
     '<div class="att-row"><div style="min-width:84px;font-weight:600">' + fmtDate(a.care_date) + '</div>' +
-    '<div style="flex:1">' + weekdayOf(a.care_date) + '</div>' +
+    '<div style="flex:1">' + weekdayOf(a.care_date) + (a.signed_at ? '<span class="muted"> ' + a.signed_at.slice(11, 16) + '</span>' : '') + '</div>' +
+    (tasksOf(a) ? '<span class="badge badge-green">' + tasksOf(a) + '</span>' : '') +
     '<span class="badge ' + STATUS_BADGE[a.status] + '">' + CARE_STATUS_NAMES[a.status] + '</span></div>'
   ).join('');
   openModal(esc(c.name) + ' 的晚托档案', `
@@ -888,6 +951,9 @@ function openCareDetail(id) {
         <button class="btn btn-danger btn-sm" onclick="deleteCare(${id})">🗑 删除</button>
       </div>
     </div>
+    <div class="section-title">📝 今日学习情况（${fmtDate(today)}）</div>
+    <div class="card"><div style="display:flex;gap:8px;flex-wrap:wrap">${taskBtn('homework_done', '📖 作业完成')}${taskBtn('recite_done', '🔊 背诵完成')}${taskBtn('correction_done', '✏️ 错题订正')}</div>
+    <div class="muted" style="margin-top:8px">点一下打勾 ✓，再点一下取消</div></div>
     <div class="section-title">🗓 最近晚托签到</div>
     ${recs.length ? '<div class="card">' + monthRecs + '</div>' : '<div class="card"><div class="empty">暂无签到记录</div></div>'}
   `);
