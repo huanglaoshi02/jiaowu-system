@@ -1010,17 +1010,20 @@ async function savePlan(id) {
     renderPlans();
   } catch (e) { alert('保存失败：' + e.message); }
 }
-function planRow(p) {
+function planRow(p, showEdit) {
   const today = todayStr();
   const over = p.due_date && p.due_date < today;
-  const btn = '<button class="plan-check' + (p.status === 'done' ? ' done' : '') + '" onclick="togglePlan(' + p.id + ')">✓</button>';
+  const isDone = p.status === 'done';
+  const btn = '<button class="plan-check' + (isDone ? ' done' : '') + '" onclick="togglePlan(' + p.id + ')" title="' + (isDone ? '撤销完成' : '标记完成') + '">✓</button>';
+  const actions = isDone
+    ? '<button class="btn btn-danger btn-sm" onclick="deletePlan(' + p.id + ')">删</button>'
+    : '<span class="badge ' + IMP_CLS[p.importance] + '">' + IMP_NAMES[p.importance] + '</span>' +
+      '<button class="btn btn-gray btn-sm" onclick="openPlanForm(' + p.id + ')" title="编辑">✏️</button>' +
+      '<button class="btn btn-danger btn-sm" onclick="deletePlan(' + p.id + ')">删</button>';
   return btn +
-    '<div class="plan-title' + (p.status === 'done' ? ' finished' : (over ? ' over' : '')) + '">' + esc(p.title) +
-    '<div class="muted">' + (p.due_date ? '截止 ' + fmtDate(p.due_date) + (over && p.status !== 'done' ? ' ⚠️已过期' : '') : '无截止日期') +
-    (p.status === 'done' && p.completed_at ? ' ｜ 完成：' + p.completed_at.replace('T', ' ').slice(5, 16) : '') + '</div></div>' +
-    '<span class="badge ' + IMP_CLS[p.importance] + '">' + IMP_NAMES[p.importance] + '</span>' +
-    '<button class="btn btn-gray btn-sm" onclick="openPlanForm(' + p.id + ')">✏️</button>' +
-    '<button class="btn btn-danger btn-sm" onclick="deletePlan(' + p.id + ')">删</button>';
+    '<div class="plan-title' + (isDone ? ' finished' : (over ? ' over' : '')) + '">' + esc(p.title) +
+    '<div class="muted">' + (isDone ? '完成 ' + (p.completed_at ? p.completed_at.replace('T', ' ').slice(5, 16) : '') : (p.due_date ? '截止 ' + fmtDate(p.due_date) + (over ? ' ⚠️已过期' : '') : '无截止日期')) + '</div></div>' +
+    '<div class="plan-actions">' + actions + '</div>';
 }
 function planEmpty() { return '<div class="empty">暂无计划</div>'; }
 function renderPlans() {
@@ -1029,20 +1032,26 @@ function renderPlans() {
   const tomorrowStr = tomorrow.getFullYear() + '-' + String(tomorrow.getMonth() + 1).padStart(2, '0') + '-' + String(tomorrow.getDate()).padStart(2, '0');
   $('#plan-today-label').textContent = '(' + today.slice(5) + ')';
 
-  const pending = state.plans.filter(p => p.status !== 'done').sort((a, b) => impRank(a) - impRank(b) || (a.due_date || '').localeCompare(b.due_date || ''));
+  const pending = state.plans.filter(p => p.status !== 'done');
   const done = state.plans.filter(p => p.status === 'done');
-  const edited = state.plans.filter(p => p.edited_at).sort((a, b) => (b.edited_at || '').localeCompare(a.edited_at || ''));
 
   const todayPending = pending.filter(p => p.due_date === today);
-  const todayDone = done.filter(p => p.completed_at && p.completed_at.slice(0, 10) === today);
   const tomorrowPending = pending.filter(p => p.due_date === tomorrowStr);
+  const editedPending = pending.filter(p => p.edited_at && p.due_date !== today && p.due_date !== tomorrowStr);
+  const otherPending = pending.filter(p => !p.edited_at && p.due_date !== today && p.due_date !== tomorrowStr);
 
-  $('#plan-today-pending').innerHTML = todayPending.length ? todayPending.map(planRow).join('') : planEmpty();
-  $('#plan-today-done').innerHTML = todayDone.length ? todayDone.map(planRow).join('') : planEmpty();
-  $('#plan-tomorrow').innerHTML = tomorrowPending.length ? tomorrowPending.map(planRow).join('') : planEmpty();
-  $('#plan-edited').innerHTML = edited.length ? edited.slice(0, 30).map(planRow).join('') : planEmpty();
-  $('#plan-pending').innerHTML = pending.length ? pending.map(planRow).join('') : planEmpty();
-  $('#plan-done').innerHTML = done.length ? done.map(planRow).join('') : planEmpty();
+  const todayDone = done.filter(p => p.completed_at && p.completed_at.slice(0, 10) === today);
+  const otherDone = done.filter(p => !(p.completed_at && p.completed_at.slice(0, 10) === today));
+
+  const sortP = list => list.slice().sort((a, b) => impRank(a) - impRank(b) || (a.due_date || '').localeCompare(b.due_date || ''));
+  const sortD = list => list.slice().sort((a, b) => (b.completed_at || b.due_date || '').localeCompare(a.completed_at || a.due_date || ''));
+
+  $('#plan-today-pending').innerHTML = todayPending.length ? sortP(todayPending).map(p => planRow(p, true)).join('') : planEmpty();
+  $('#plan-today-done').innerHTML = todayDone.length ? sortD(todayDone).map(p => planRow(p, false)).join('') : planEmpty();
+  $('#plan-tomorrow').innerHTML = tomorrowPending.length ? sortP(tomorrowPending).map(p => planRow(p, true)).join('') : planEmpty();
+  $('#plan-edited').innerHTML = editedPending.length ? sortP(editedPending).map(p => planRow(p, true)).join('') : planEmpty();
+  $('#plan-pending').innerHTML = otherPending.length ? sortP(otherPending).map(p => planRow(p, true)).join('') : planEmpty();
+  $('#plan-done').innerHTML = otherDone.length ? sortD(otherDone).map(p => planRow(p, false)).join('') : planEmpty();
 }
 async function togglePlan(id) {
   const p = state.plans.find(x => x.id === id);
