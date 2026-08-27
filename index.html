@@ -101,10 +101,11 @@ input:focus, select:focus, textarea:focus { border-color: #2b6de8; }
 .sign-btn[data-s="normal"].active { background: #2b6de8; border-color: #2b6de8; }
 
 /* 计划 */
-.plan-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
-.plan-check { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #ccc; background: none; flex-shrink: 0; font-size: 14px; color: #fff; }
+.plan-item { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
+.plan-check { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #ccc; background: none; flex-shrink: 0; font-size: 14px; color: #fff; line-height: 22px; text-align: center; }
 .plan-check.done { background: #1d9d5a; border-color: #1d9d5a; }
-.plan-title { flex: 1; font-size: 14px; }
+.plan-title { flex: 1; min-width: 0; font-size: 14px; }
+.plan-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .plan-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .plan-title.over { color: #d64545; }
 .plan-title.finished { text-decoration: line-through; color: #aaa; }

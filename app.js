@@ -1021,7 +1021,7 @@ function planRow(p, showEdit) {
       '<button class="btn btn-gray btn-sm" onclick="openPlanForm(' + p.id + ')" title="编辑">✏️</button>' +
       '<button class="btn btn-danger btn-sm" onclick="deletePlan(' + p.id + ')">删</button>';
   return btn +
-    '<div class="plan-title' + (isDone ? ' finished' : (over ? ' over' : '')) + '">' + esc(p.title) +
+    '<div class="plan-title' + (isDone ? ' finished' : (over ? ' over' : '')) + '"><div class="plan-name">' + esc(p.title) + '</div>' +
     '<div class="muted">' + (isDone ? '完成 ' + (p.completed_at ? p.completed_at.replace('T', ' ').slice(5, 16) : '') : (p.due_date ? '截止 ' + fmtDate(p.due_date) + (over ? ' ⚠️已过期' : '') : '无截止日期')) + '</div></div>' +
     '<div class="plan-actions">' + actions + '</div>';
 }
