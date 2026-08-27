@@ -439,27 +439,20 @@ function openStudentDetail(id) {
       (att ? '<span class="badge ' + STATUS_BADGE[att.status] + '">' + STATUS_NAMES[att.status] + '</span>' : '<span class="badge badge-gray">未签到</span>') + '</div>';
   }).join('');
 
-  // 成绩：所有科目一张图
+  // 成绩：选科目 → 单科趋势图 + 该科每次考试明细
   const myScores = state.scores.filter(x => x.student_id === id);
+  const subjects = [...new Set(myScores.map(x => x.subject).filter(Boolean))].sort();
   let scoresHtml = '';
   if (!myScores.length) {
     scoresHtml = '<div class="empty">还没有考试成绩，点击下方"添加成绩"</div>';
   } else {
-    const dates = [...new Set(myScores.map(x => x.exam_date).filter(Boolean))].sort();
-    const subjects = [...new Set(myScores.map(x => x.subject).filter(Boolean))];
-    const colors = ['#2b6de8', '#e07b00', '#1d9d5a', '#d64545', '#7a4de8', '#0aa5b5', '#c97b2d'];
-    const series = subjects.map((sub, i) => ({
-      label: sub,
-      color: colors[i % colors.length],
-      data: myScores.filter(x => x.subject === sub).reduce((m, x) => { m[x.exam_date] = { value: Number(x.score), name: x.exam_name || '' }; return m; }, {})
-    }));
-    scoresHtml = '<div class="chart-title">📈 各科成绩趋势（一次考试一图）</div>' +
-      '<div class="chart-box"><canvas id="chart-all-' + id + '"></canvas></div>' +
-      '<div class="legend">' + series.map(s => '<span class="legend-item"><i style="background:' + s.color + '"></i>' + esc(s.label) + '</span>').join('') + '</div>' +
-      '<div class="score-table"><table><tr><th>日期</th><th>考试</th><th>科目</th><th>分数</th></tr>' +
-      myScores.slice().sort((a, b) => (a.exam_date || '').localeCompare(b.exam_date || '')).map(x =>
-        '<tr><td>' + (x.exam_date ? x.exam_date.slice(5) : '') + '</td><td>' + esc(x.exam_name || '') + '</td><td>' + esc(x.subject) + '</td><td><b>' + x.score + '</b></td></tr>').join('') +
-      '</table></div>';
+    const firstSub = subjects[0];
+    scoresHtml = '<div class="tab-bar" style="margin-bottom:6px">' +
+      subjects.map(sub => '<button class="tab' + (sub === firstSub ? ' active' : '') + '" onclick="switchScoreSubject(' + id + ', \'' + esc(sub) + '\')">' + esc(sub) + '</button>').join('') +
+      '</div>' +
+      '<div class="chart-box"><canvas id="score-canvas-' + id + '"></canvas></div>' +
+      '<div class="score-table" id="score-table-' + id + '"><div class="empty" style="padding:16px 10px;color:#888">正在加载…</div></div>' +
+      '<div class="muted" style="margin-top:6px">👆 点上方科目切换；折线下方是每次考试的分数明细</div>';
   }
 
   openModal(esc(s.name) + ' 的档案', `
@@ -487,8 +480,7 @@ function openStudentDetail(id) {
     ${historyHtml}
   `);
   setTimeout(() => {
-    const cv = document.getElementById('chart-all-' + id);
-    if (cv && myScores.length) drawMultiLineChart(cv, dates, series);
+    if (subjects.length) switchScoreSubject(id, subjects[0]);
   }, 50);
 }
 
@@ -530,25 +522,54 @@ async function deleteStudent(id) {
   } catch (e) { alert('删除失败：' + e.message); }
 }
 
-/* ---------- 多科目成绩折线图（纯 Canvas） ---------- */
-function drawMultiLineChart(canvas, dates, series) {
-  if (!dates || !dates.length || !series.length) return;
+/* ---------- 单科成绩折线图（选科目 → 画该科全部考试） ---------- */
+function switchScoreSubject(studentId, subject) {
+  const tabBtns = document.querySelectorAll('#modal-body .tab-bar .tab');
+  tabBtns.forEach(b => b.classList.toggle('active', b.textContent === subject));
+  const myScores = state.scores.filter(x => x.student_id === studentId && x.subject === subject);
+  const canvas = document.getElementById('score-canvas-' + studentId);
+  if (canvas) drawScoreLine(canvas, myScores);
+  const tableEl = document.getElementById('score-table-' + studentId);
+  if (tableEl) {
+    if (!myScores.length) {
+      tableEl.innerHTML = '<div class="empty" style="padding:16px 10px;color:#888">该科目暂无成绩</div>';
+    } else {
+      const ordered = myScores.slice().sort((a, b) => (a.exam_date || '').localeCompare(b.exam_date || ''));
+      tableEl.innerHTML = '<table><tr><th>日期</th><th>考试</th><th>分数</th><th>变化</th></tr>' +
+        ordered.map((x, i) => {
+          let delta = '<span class="muted">—</span>';
+          if (i > 0) {
+            const prev = Number(ordered[i - 1].score), cur = Number(x.score);
+            const d = cur - prev;
+            delta = d > 0 ? '<span style="color:#1d9d5a">▲ +' + d + '</span>' : d < 0 ? '<span style="color:#d64545">▼ ' + d + '</span>' : '<span class="muted">持平</span>';
+          }
+          return '<tr><td>' + (x.exam_date ? x.exam_date.slice(5) : '') + '</td><td>' + esc(x.exam_name || '') + '</td><td><b>' + x.score + '</b></td><td>' + delta + '</td></tr>';
+        }).join('') + '</table>';
+    }
+  }
+}
+function drawScoreLine(canvas, scores) {
+  if (!scores || !scores.length) {
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
+  const ordered = scores.slice().sort((a, b) => (a.exam_date || '').localeCompare(b.exam_date || ''));
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
-  const W = canvas.clientWidth || 320, H = 220;
+  const W = canvas.clientWidth || 340, H = 230;
   canvas.width = W * dpr; canvas.height = H * dpr;
   ctx.scale(dpr, dpr);
-  const padL = 34, padR = 12, padT = 14, padB = 30;
+  const padL = 36, padR = 12, padT = 16, padB = 34;
   const cw = W - padL - padR, ch = H - padT - padB;
-  const allVals = [];
-  dates.forEach(d => series.forEach(s => { if (s.data[d]) allVals.push(s.data[d].value); }));
-  if (!allVals.length) return;
-  const minV = Math.max(0, Math.min(...allVals) - 5);
-  const maxV = Math.min(1000, Math.max(...allVals) + 5);
+  const vals = ordered.map(x => Number(x.score));
+  const minV = Math.max(0, Math.min(...vals) - 5);
+  const maxV = Math.min(1000, Math.max(...vals) + 5);
   const y = v => padT + ch - ((v - minV) / (maxV - minV || 1)) * ch;
-  const x = i => dates.length === 1 ? padL + cw / 2 : padL + (cw * i) / (dates.length - 1);
+  const x = i => ordered.length === 1 ? padL + cw / 2 : padL + (cw * i) / (ordered.length - 1);
 
   ctx.clearRect(0, 0, W, H);
+  const color = '#2b6de8';
+  // 网格
   ctx.strokeStyle = '#f0f0f0'; ctx.fillStyle = '#aaa'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
   for (let g = 0; g <= 4; g++) {
     const v = minV + ((maxV - minV) * g) / 4;
@@ -556,38 +577,24 @@ function drawMultiLineChart(canvas, dates, series) {
     ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(W - padR, yy); ctx.stroke();
     ctx.fillText(Math.round(v), padL - 5, yy + 3);
   }
-  // 每科一条折线（断点处理）
-  series.forEach(s => {
-    ctx.strokeStyle = s.color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
-    let drawing = false;
-    ctx.beginPath();
-    dates.forEach((d, i) => {
-      const p = s.data[d];
-      if (p) {
-        if (!drawing) { ctx.moveTo(x(i), y(p.value)); drawing = true; }
-        else ctx.lineTo(x(i), y(p.value));
-      } else drawing = false;
-    });
-    ctx.stroke();
+  // 折线
+  ctx.strokeStyle = color; ctx.lineWidth = 2.2; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ordered.forEach((s, i) => { i === 0 ? ctx.moveTo(x(i), y(Number(s.score))) : ctx.lineTo(x(i), y(Number(s.score))); });
+  ctx.stroke();
+  // 点位 + 分数
+  ordered.forEach((s, i) => {
+    ctx.beginPath(); ctx.arc(x(i), y(Number(s.score)), 4, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+    ctx.fillStyle = '#333'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(String(s.score), x(i), y(Number(s.score)) - 9);
   });
-  // 数据点 + 分数
-  dates.forEach((d, i) => {
-    series.forEach(s => {
-      const p = s.data[d];
-      if (!p) return;
-      ctx.beginPath(); ctx.arc(x(i), y(p.value), 3.5, 0, Math.PI * 2); ctx.fillStyle = s.color; ctx.fill();
-      ctx.fillStyle = '#333'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(String(p.value), x(i), y(p.value) - 5);
-    });
+  // x 轴：日期 + 考试名
+  ordered.forEach((s, i) => {
+    ctx.fillStyle = '#555'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(s.exam_date ? s.exam_date.slice(5) : '', x(i), H - 14);
+    ctx.fillStyle = '#999'; ctx.font = '9px sans-serif';
+    ctx.fillText(s.exam_name ? s.exam_name.slice(0, 6) : '', x(i), H - 4);
   });
-  // x 轴标签：日期 + 考试名
-  dates.forEach((d, i) => {
-    const names = [...new Set(series.map(s => (s.data[d] && s.data[d].name) || '').filter(Boolean))];
-    const label = (d.length >= 10 ? d.slice(5) : d) + (names[0] ? ' ' + names[0].slice(0, 5) : '');
-    ctx.fillStyle = '#999'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(label, x(i), H - 10);
-  });
-  canvas.title = series.map(s => s.label + '：' + dates.map(d => (s.data[d] ? (s.data[d].name || d) + ' ' + s.data[d].value : '')).filter(Boolean).join('，')).join(' | ');
 }
 
 /* ================= 排课 ================= */
