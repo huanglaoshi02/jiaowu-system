@@ -1,4 +1,4 @@
-/* ================= 教务管理系统 app.js ================= */
+/* ================= 黄老师工作台 app.js ================= */
 
 const SUPABASE_URL = 'https://kgekkxqbjxhltmjckdam.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_bmOF5PN2EwvUtlAnU6ZFYg_7sW_gM4V';
@@ -51,28 +51,41 @@ async function sha256(text) {
 }
 const STATUS_NAMES = { normal: '正常', late: '迟到', leave: '请假', absent: '缺勤' };
 const STATUS_BADGE = { normal: 'badge-green', late: 'badge-orange', leave: 'badge-blue', absent: 'badge-red' };
+const CARE_STATUS_NAMES = { normal: '已到', leave: '请假', absent: '未到' };
+const CARE_TYPE_NAMES = { da: '大班晚托', two: '两人晚托', eight: '八人晚托' };
+const CARE_TYPE_BADGE = { da: 'badge-purple', two: 'badge-blue', eight: 'badge-orange' };
 const IMP_NAMES = { high: '高', medium: '中', low: '低' };
 const IMP_CLS = { high: 'badge-red', medium: 'badge-orange', low: 'badge-gray' };
 
 /* ---------- 状态 ---------- */
-const state = { students: [], courses: [], attendance: [], scores: [], plans: [] };
+const state = { students: [], courses: [], attendance: [], scores: [], plans: [], careStudents: [], careAttendance: [], holidays: [] };
 let courseFilter = 'future';
+let careFilter = 'all';
+let calYear = new Date().getFullYear();
+let calMonth = new Date().getMonth();
 
 async function loadAll() {
-  const [s, c, a, sc, p] = await Promise.all([
+  const [s, c, a, sc, p, cs, ca, h] = await Promise.all([
     api('students?select=*&order=name.asc'),
     api('courses?select=*&order=course_date.asc,start_time.asc'),
     api('attendance?select=*&order=signed_at.desc'),
     api('scores?select=*&order=exam_date.asc,created_at.asc'),
     api('plans?select=*&order=created_at.asc'),
+    api('care_students?select=*&order=name.asc'),
+    api('care_attendance?select=*&order=signed_at.desc'),
+    api('holidays?select=*&order=date.asc'),
   ]);
   state.students = s || [];
   state.courses = c || [];
   state.attendance = a || [];
   state.scores = sc || [];
   state.plans = p || [];
+  state.careStudents = cs || [];
+  state.careAttendance = ca || [];
+  state.holidays = h || [];
 }
 function studentById(id) { return state.students.find(x => x.id === id); }
+function careById(id) { return state.careStudents.find(x => x.id === id); }
 function attendanceOf(courseId) { return state.attendance.find(x => x.course_id === courseId); }
 
 /* ---------- 登录 ---------- */
@@ -83,7 +96,7 @@ async function initAuth() {
     else if (localStorage.getItem('jw_login') === '1') enterApp();
     else { $('#login-set').style.display = 'none'; $('#login-enter').style.display = 'block'; }
   } catch (e) {
-    alert('连接云端数据库失败：' + e.message + '\n\n请确认：\n1. 网络能正常上网\n2. 已按步骤在 Supabase 里运行建表 SQL');
+    alert('连接云端数据库失败：' + e.message + '\n\n请确认：\n1. 网络能正常上网\n2. 已按步骤在 Supabase 里运行建表 SQL（含升级 SQL）');
   }
 }
 async function setPassword() {
@@ -133,6 +146,7 @@ function showPage(name) {
   else if (name === 'students') renderStudents();
   else if (name === 'courses') renderCourses();
   else if (name === 'attendance') renderAttendance();
+  else if (name === 'care') renderCare();
   else if (name === 'plans') renderPlans();
 }
 
@@ -152,13 +166,16 @@ function renderHome() {
   const unchecked = todayCourses.filter(c => !attendanceOf(c.id));
   const pending = state.plans.filter(p => p.status !== 'done');
   const overdue = pending.filter(p => p.due_date && p.due_date < today);
-  const low = state.students.filter(s => (s.remaining_lessons || 0) <= 2);
+  const low = state.students.filter(s => (s.purchased_remaining || 0) <= 2);
 
   $('#home-stats').innerHTML =
     '<div class="stat-card"><div class="stat-num">' + state.students.length + '</div><div class="stat-label">👦 在管学生</div></div>' +
     '<div class="stat-card"><div class="stat-num">' + todayCourses.length + '</div><div class="stat-label">📅 今日课程</div></div>' +
     '<div class="stat-card"><div class="stat-num">' + unchecked.length + '</div><div class="stat-label">✅ 待签到</div></div>' +
     '<div class="stat-card"><div class="stat-num">' + pending.length + (overdue.length ? '<span style="font-size:13px;color:#d64545">(' + overdue.length + '到期)</span>' : '') + '</div><div class="stat-label">📝 待办事项</div></div>';
+
+  // 日历
+  renderCalendar();
 
   if (!todayCourses.length) {
     $('#home-today-courses').innerHTML = '<div class="empty">今天没有排课 🎉</div>';
@@ -169,7 +186,7 @@ function renderHome() {
       const badge = att ? '<span class="badge ' + STATUS_BADGE[att.status] + '">' + STATUS_NAMES[att.status] + '</span>' : '<span class="badge badge-gray">未签到</span>';
       return '<div class="course-row">' +
         '<div class="course-time">' + fmtTime(c.start_time) + '</div>' +
-        '<div class="course-info"><div class="list-title">' + (stu ? esc(stu.name) : '?') + ' · ' + esc(c.subject || '') + '</div>' +
+        '<div class="course-info"><div class="list-title">' + (stu ? esc(stu.name) : '?') + ' · ' + esc(c.subject || '') + (c.lesson_type === 'bonus' ? ' <span class="badge badge-orange">赠</span>' : '') + '</div>' +
         '<div class="list-sub">' + esc(c.teacher || '') + '</div></div>' + badge + '</div>';
     }).join('');
   }
@@ -180,7 +197,7 @@ function renderHome() {
     $('#home-low-lessons').innerHTML = low.map(s =>
       '<div class="list-item"><div class="list-main"><div class="list-title">' + esc(s.name) + ' · ' + esc(s.subjects || '') + '</div>' +
       '<div class="list-sub">' + esc(s.parent_phone || '') + '</div></div>' +
-      '<span class="badge ' + (s.remaining_lessons <= 0 ? 'badge-red' : 'badge-orange') + '">剩 ' + (s.remaining_lessons || 0) + ' 节</span></div>'
+      '<span class="badge ' + ((s.purchased_remaining || 0) <= 0 ? 'badge-red' : 'badge-orange') + '">购剩 ' + (s.purchased_remaining || 0) + ' 节</span></div>'
     ).join('');
   }
 
@@ -196,6 +213,77 @@ function renderHome() {
   }
 }
 
+/* ================= 日历 ================= */
+function renderCalendar() {
+  const year = calYear, month = calMonth;
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const today = todayStr();
+  let html = '<div class="cal-head"><button class="btn btn-gray btn-sm" onclick="calShift(-1)">‹ 上月</button><b>' + year + '年' + (month + 1) + '月</b><button class="btn btn-gray btn-sm" onclick="calShift(1)">下月 ›</button></div>';
+  html += '<div class="cal-grid">' + ['日', '一', '二', '三', '四', '五', '六'].map(d => '<div class="cal-dow">' + d + '</div>').join('');
+  for (let i = 0; i < firstDow; i++) html += '<div class="cal-cell" style="background:none"></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const ds = year + '-' + String(month + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+    const hols = state.holidays.filter(h => h.date === ds);
+    const isToday = ds === today;
+    html += '<div class="cal-cell' + (isToday ? ' today' : '') + '"><div class="d">' + d + '</div>' +
+      hols.map(h => '<div class="' + (h.type === 'workday' ? 'work' : 'hol') + '">' + (h.type === 'workday' ? '班·' : '') + esc(h.name) + '</div>').join('') + '</div>';
+  }
+  html += '</div>';
+  $('#home-calendar').innerHTML = html;
+
+  // 本月节日清单
+  const prefix = year + '-' + String(month + 1).padStart(2, '0');
+  const monthHols = state.holidays.filter(h => h.date.startsWith(prefix)).sort((a, b) => a.date.localeCompare(b.date));
+  $('#home-holidays').innerHTML = !monthHols.length
+    ? '<div class="muted">本月暂无节日记录</div>'
+    : monthHols.map(h => '<div class="list-item" style="padding:6px 0"><div class="list-main"><span class="badge ' + (h.type === 'workday' ? 'badge-orange' : 'badge-red') + '">' + (h.type === 'workday' ? '调休补班' : '节日') + '</span> ' + esc(h.name) + ' <span class="muted">' + h.date.slice(5) + '</span></div>' +
+      '<button class="btn btn-danger btn-sm" onclick="deleteHoliday(' + h.id + ')">删</button></div>').join('');
+}
+function calShift(n) {
+  calMonth += n;
+  if (calMonth < 0) { calMonth = 11; calYear--; }
+  if (calMonth > 11) { calMonth = 0; calYear++; }
+  renderCalendar();
+}
+function openHolidayForm() {
+  openModal('添加节日 / 调休', `
+    <div class="form-grid">
+      <div class="form-row"><label>日期 *</label><input id="h-date" type="date" value="${todayStr()}"></div>
+      <div class="form-row"><label>类型</label>
+        <select id="h-type">
+          <option value="festival">节日</option>
+          <option value="workday">调休补班（周末上班）</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row"><label>名称 *</label><input id="h-name" type="text" placeholder="如：中秋节"></div>
+    <button class="btn btn-primary btn-block" onclick="saveHoliday()">保存</button>
+  `);
+}
+async function saveHoliday() {
+  const date = $('#h-date').value, name = $('#h-name').value.trim();
+  if (!date) return alert('请选择日期');
+  if (!name) return alert('请填写名称');
+  try {
+    await api('holidays', { method: 'POST', body: { date, name, type: $('#h-type').value } });
+    await loadAll();
+    closeModal();
+    renderCalendar();
+  } catch (e) {
+    if (String(e.message).includes('duplicate')) alert('这个日期已经有记录了，先删除原记录再添加');
+    else alert('保存失败：' + e.message);
+  }
+}
+async function deleteHoliday(id) {
+  if (!confirm('确定删除这条节日/调休记录吗？')) return;
+  try {
+    await api('holidays?id=eq.' + id, { method: 'DELETE' });
+    await loadAll();
+    renderCalendar();
+  } catch (e) { alert('删除失败：' + e.message); }
+}
+
 /* ================= 学生档案 ================= */
 function renderStudents() {
   const kw = $('#stu-search').value.trim().toLowerCase();
@@ -206,18 +294,20 @@ function renderStudents() {
     $('#stu-list').innerHTML = '<div class="card"><div class="empty">' + (kw ? '没有找到匹配的学生' : '还没有学生，点右上角"＋ 建档"添加第一位学生吧') + '</div></div>';
     return;
   }
-  $('#stu-list').innerHTML = list.map(s =>
-    '<div class="card" style="cursor:pointer" onclick="openStudentDetail(' + s.id + ')">' +
-    '<div class="list-item"><div class="list-main"><div class="list-title">' + esc(s.name) +
-    ' <span class="badge badge-blue">' + esc(s.grade || '') + '</span></div>' +
-    '<div class="list-sub">' + esc(s.subjects || '未填科目') + ' · ' + esc(s.teacher || '') + '</div></div>' +
-    '<span class="badge ' + ((s.remaining_lessons || 0) <= 2 ? 'badge-red' : 'badge-green') + '">剩 ' + (s.remaining_lessons || 0) + '/' + (s.total_lessons || 0) + ' 节</span></div></div>'
-  ).join('');
+  $('#stu-list').innerHTML = list.map(s => {
+    const pr = s.purchased_remaining || 0;
+    return '<div class="card" style="cursor:pointer" onclick="openStudentDetail(' + s.id + ')">' +
+      '<div class="list-item"><div class="list-main"><div class="list-title">' + esc(s.name) +
+      ' <span class="badge badge-blue">' + esc(s.grade || '') + '</span>' +
+      (s.care_type && s.care_type !== 'none' ? ' <span class="badge ' + CARE_TYPE_BADGE[s.care_type] + '">🌙' + CARE_TYPE_NAMES[s.care_type] + '</span>' : '') + '</div>' +
+      '<div class="list-sub">' + esc(s.subjects || '未填科目') + ' · ' + esc(s.teacher || '') + '</div></div>' +
+      '<span class="badge ' + (pr <= 2 ? 'badge-red' : 'badge-green') + '">购 ' + pr + ' / 赠 ' + (s.bonus_remaining || 0) + '</span></div></div>';
+  }).join('');
 }
 
 function openStudentForm(id) {
   const s = id ? studentById(id) : null;
-  const f = id ? s : { name: '', grade: '', subjects: '', teacher: '', school: '', birthday: '', parent_phone: '', enroll_date: todayStr(), total_lessons: 0, notes: '' };
+  const f = id ? s : { name: '', grade: '', subjects: '', teacher: '', school: '', birthday: '', parent_phone: '', enroll_date: todayStr(), purchased_lessons: 0, bonus_lessons: 0, care_type: 'none', notes: '' };
   openModal(id ? '编辑学生' : '学生建档', `
     <div class="form-row"><label>姓名 *</label><input id="f-name" type="text" value="${esc(f.name)}"></div>
     <div class="form-grid">
@@ -233,7 +323,18 @@ function openStudentForm(id) {
       <div class="form-row"><label>报名时间</label><input id="f-enroll" type="date" value="${esc(f.enroll_date)}"></div>
     </div>
     <div class="form-row"><label>家长电话</label><input id="f-phone" type="tel" value="${esc(f.parent_phone)}"></div>
-    <div class="form-row"><label>报读课时数（总节数）</label><input id="f-total" type="number" min="0" value="${f.total_lessons || 0}"></div>
+    <div class="form-grid">
+      <div class="form-row"><label>购买课时数</label><input id="f-purchased" type="number" min="0" value="${f.purchased_lessons || 0}"></div>
+      <div class="form-row"><label>赠送课时数</label><input id="f-bonus" type="number" min="0" value="${f.bonus_lessons || 0}"></div>
+    </div>
+    <div class="form-row"><label>晚托班</label>
+      <select id="f-care">
+        <option value="none" ${f.care_type === 'none' || !f.care_type ? 'selected' : ''}>无（不晚托）</option>
+        <option value="da" ${f.care_type === 'da' ? 'selected' : ''}>大班晚托</option>
+        <option value="two" ${f.care_type === 'two' ? 'selected' : ''}>两人晚托</option>
+        <option value="eight" ${f.care_type === 'eight' ? 'selected' : ''}>八人晚托</option>
+      </select>
+    </div>
     <div class="form-row"><label>备注</label><textarea id="f-notes" rows="2">${esc(f.notes)}</textarea></div>
     <button class="btn btn-primary btn-block" onclick="saveStudent(${id || 'null'})">保存</button>
   `);
@@ -248,7 +349,9 @@ async function saveStudent(id) {
     birthday: $('#f-birthday').value,
     parent_phone: $('#f-phone').value.trim(),
     enroll_date: $('#f-enroll').value,
-    total_lessons: Number($('#f-total').value) || 0,
+    purchased_lessons: Number($('#f-purchased').value) || 0,
+    bonus_lessons: Number($('#f-bonus').value) || 0,
+    care_type: $('#f-care').value,
     notes: $('#f-notes').value.trim(),
   };
   if (!data.name) return alert('请填写学生姓名');
@@ -256,20 +359,38 @@ async function saveStudent(id) {
     if (id) {
       await api('students?id=eq.' + id, { method: 'PATCH', body: data });
     } else {
-      data.remaining_lessons = data.total_lessons;
+      data.purchased_remaining = data.purchased_lessons;
+      data.bonus_remaining = data.bonus_lessons;
       await api('students', { method: 'POST', body: data });
     }
     await loadAll();
+    const saved = id ? studentById(id) : state.students.find(s => s.name === data.name && s.parent_phone === data.parent_phone);
+    if (saved) await syncCareFromStudent(saved);
     closeModal();
     renderStudents();
   } catch (e) { alert('保存失败：' + e.message); }
+}
+async function syncCareFromStudent(s) {
+  try {
+    if (s.care_type === 'none' || !s.care_type) {
+      const matches = state.careStudents.filter(c => c.name === s.name && c.parent_phone === s.parent_phone);
+      for (const m of matches) await api('care_students?id=eq.' + m.id, { method: 'DELETE' });
+    } else {
+      const exists = state.careStudents.find(c => c.name === s.name && c.parent_phone === s.parent_phone);
+      const body = { care_type: s.care_type, grade: s.grade || '', school: s.school || '', parent_phone: s.parent_phone || '' };
+      if (exists) await api('care_students?id=eq.' + exists.id, { method: 'PATCH', body });
+      else await api('care_students', { method: 'POST', body: { name: s.name, ...body } });
+    }
+    await loadAll();
+  } catch (e) {}
 }
 
 function openStudentDetail(id) {
   const s = studentById(id);
   if (!s) return;
   const myAtt = state.attendance.filter(a => a.student_id === id);
-  const used = myAtt.filter(a => ['normal', 'late', 'absent'].includes(a.status)).length;
+  const usedP = myAtt.filter(a => { const c = state.courses.find(x => x.id === a.course_id); return c && c.lesson_type !== 'bonus' && ['normal', 'late', 'absent'].includes(a.status); }).length;
+  const usedB = myAtt.filter(a => { const c = state.courses.find(x => x.id === a.course_id); return c && c.lesson_type === 'bonus' && ['normal', 'late', 'absent'].includes(a.status); }).length;
   const myCourses = state.courses.filter(c => c.student_id === id).sort((a, b) => (b.course_date + (b.start_time || '')).localeCompare(a.course_date + (a.start_time || '')));
 
   let historyHtml = '';
@@ -278,30 +399,43 @@ function openStudentDetail(id) {
     const att = attendanceOf(c.id);
     return '<div class="att-row"><div style="min-width:84px;font-weight:600">' + fmtDate(c.course_date) + '</div>' +
       '<div class="muted" style="min-width:44px">' + fmtTime(c.start_time) + '</div>' +
-      '<div style="flex:1">' + esc(c.subject || '') + ' · ' + esc(c.teacher || '') + '</div>' +
+      '<div style="flex:1">' + esc(c.subject || '') + ' · ' + esc(c.teacher || '') + (c.lesson_type === 'bonus' ? ' 🎁赠' : '') + '</div>' +
       (att ? '<span class="badge ' + STATUS_BADGE[att.status] + '">' + STATUS_NAMES[att.status] + '</span>' : '<span class="badge badge-gray">未签到</span>') + '</div>';
   }).join('');
 
-  const subjects = [...new Set(state.scores.filter(x => x.student_id === id).map(x => x.subject).filter(Boolean))];
-  let chartsHtml = '';
-  if (!subjects.length) chartsHtml = '<div class="empty">还没有考试成绩，点击下方"添加成绩"</div>';
-  else {
-    chartsHtml = subjects.map(sub => {
-      const pts = state.scores.filter(x => x.student_id === id && x.subject === sub);
-      return '<div class="chart-title">📈 ' + esc(sub) + ' 成绩趋势</div>' +
-        '<div class="chart-box"><canvas id="chart-' + id + '-' + esc(sub) + '" data-sub="' + esc(sub) + '"></canvas></div>';
-    }).join('');
+  // 成绩：所有科目一张图
+  const myScores = state.scores.filter(x => x.student_id === id);
+  let scoresHtml = '';
+  if (!myScores.length) {
+    scoresHtml = '<div class="empty">还没有考试成绩，点击下方"添加成绩"</div>';
+  } else {
+    const dates = [...new Set(myScores.map(x => x.exam_date).filter(Boolean))].sort();
+    const subjects = [...new Set(myScores.map(x => x.subject).filter(Boolean))];
+    const colors = ['#2b6de8', '#e07b00', '#1d9d5a', '#d64545', '#7a4de8', '#0aa5b5', '#c97b2d'];
+    const series = subjects.map((sub, i) => ({
+      label: sub,
+      color: colors[i % colors.length],
+      data: myScores.filter(x => x.subject === sub).reduce((m, x) => { m[x.exam_date] = { value: Number(x.score), name: x.exam_name || '' }; return m; }, {})
+    }));
+    scoresHtml = '<div class="chart-title">📈 各科成绩趋势（一次考试一图）</div>' +
+      '<div class="chart-box"><canvas id="chart-all-' + id + '"></canvas></div>' +
+      '<div class="legend">' + series.map(s => '<span class="legend-item"><i style="background:' + s.color + '"></i>' + esc(s.label) + '</span>').join('') + '</div>' +
+      '<div class="score-table"><table><tr><th>日期</th><th>考试</th><th>科目</th><th>分数</th></tr>' +
+      myScores.slice().sort((a, b) => (a.exam_date || '').localeCompare(b.exam_date || '')).map(x =>
+        '<tr><td>' + (x.exam_date ? x.exam_date.slice(5) : '') + '</td><td>' + esc(x.exam_name || '') + '</td><td>' + esc(x.subject) + '</td><td><b>' + x.score + '</b></td></tr>').join('') +
+      '</table></div>';
   }
 
   openModal(esc(s.name) + ' 的档案', `
     <div class="card" style="box-shadow:none;padding:0">
       <div class="list-item">
         <div class="list-main">
-          <div class="list-title">${esc(s.name)} <span class="badge badge-blue">${esc(s.grade || '')}</span></div>
+          <div class="list-title">${esc(s.name)} <span class="badge badge-blue">${esc(s.grade || '')}</span>
+          ${s.care_type && s.care_type !== 'none' ? '<span class="badge ' + CARE_TYPE_BADGE[s.care_type] + '">🌙' + CARE_TYPE_NAMES[s.care_type] + '</span>' : ''}</div>
           <div class="list-sub">科目：${esc(s.subjects || '')} ｜ 老师：${esc(s.teacher || '')}</div>
           <div class="list-sub">学校：${esc(s.school || '')} ｜ 生日：${esc(s.birthday || '')}</div>
           <div class="list-sub">家长电话：${esc(s.parent_phone || '')} ｜ 报名：${esc(s.enroll_date || '')}</div>
-          <div class="list-sub">课时：已用 ${used} 节 ｜ 剩余 <b style="color:${(s.remaining_lessons||0) <= 2 ? '#d64545' : '#1d9d5a'}">${s.remaining_lessons || 0}</b> / ${s.total_lessons || 0} 节</div>
+          <div class="list-sub">课时：购买 ${esc(s.purchased_lessons || 0)} 节（已用 ${usedP}，剩 <b style="color:${(s.purchased_remaining || 0) <= 2 ? '#d64545' : '#1d9d5a'}">${s.purchased_remaining || 0}</b>）｜ 赠送 ${esc(s.bonus_lessons || 0)} 节（已用 ${usedB}，剩 ${s.bonus_remaining || 0}）</div>
           ${s.notes ? '<div class="list-sub">备注：' + esc(s.notes) + '</div>' : ''}
         </div>
       </div>
@@ -311,17 +445,14 @@ function openStudentDetail(id) {
       </div>
     </div>
     <div class="section-title">📊 成绩趋势</div>
-    ${chartsHtml}
+    ${scoresHtml}
     <button class="btn btn-primary btn-block" style="margin-top:8px" onclick="openScoreForm(${id})">＋ 添加考试成绩</button>
     <div class="section-title">🗓 上课记录</div>
     ${historyHtml}
   `);
   setTimeout(() => {
-    subjects.forEach(sub => {
-      const pts = state.scores.filter(x => x.student_id === id && x.subject === sub);
-      const cv = document.getElementById('chart-' + id + '-' + sub);
-      if (cv) drawLineChart(cv, pts.map(p => ({ label: p.exam_date ? p.exam_date.slice(5) : p.exam_name, value: Number(p.score), name: p.exam_name })));
-    });
+    const cv = document.getElementById('chart-all-' + id);
+    if (cv && myScores.length) drawMultiLineChart(cv, dates, series);
   }, 50);
 }
 
@@ -351,33 +482,37 @@ async function saveScore(studentId) {
 }
 
 async function deleteStudent(id) {
+  const s = studentById(id);
   if (!confirm('确定删除该学生吗？他的排课、签到、成绩记录会一并删除，无法恢复！')) return;
   try {
+    const matches = state.careStudents.filter(c => s && c.name === s.name && c.parent_phone === s.parent_phone);
     await api('students?id=eq.' + id, { method: 'DELETE' });
+    for (const m of matches) await api('care_students?id=eq.' + m.id, { method: 'DELETE' });
     await loadAll();
     closeModal();
     renderStudents();
   } catch (e) { alert('删除失败：' + e.message); }
 }
 
-/* ---------- 折线图（纯 Canvas，无外部依赖） ---------- */
-function drawLineChart(canvas, pts) {
-  if (!pts || pts.length === 0) return;
+/* ---------- 多科目成绩折线图（纯 Canvas） ---------- */
+function drawMultiLineChart(canvas, dates, series) {
+  if (!dates || !dates.length || !series.length) return;
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
-  const W = canvas.clientWidth || 300, H = 190;
+  const W = canvas.clientWidth || 320, H = 220;
   canvas.width = W * dpr; canvas.height = H * dpr;
   ctx.scale(dpr, dpr);
-  const padL = 34, padR = 12, padT = 12, padB = 26;
+  const padL = 34, padR = 12, padT = 14, padB = 30;
   const cw = W - padL - padR, ch = H - padT - padB;
-  const vals = pts.map(p => p.value);
-  const minV = Math.max(0, Math.min(...vals) - 5);
-  const maxV = Math.min(1000, Math.max(...vals) + 5);
+  const allVals = [];
+  dates.forEach(d => series.forEach(s => { if (s.data[d]) allVals.push(s.data[d].value); }));
+  if (!allVals.length) return;
+  const minV = Math.max(0, Math.min(...allVals) - 5);
+  const maxV = Math.min(1000, Math.max(...allVals) + 5);
   const y = v => padT + ch - ((v - minV) / (maxV - minV || 1)) * ch;
-  const x = i => pts.length === 1 ? padL + cw / 2 : padL + (cw * i) / (pts.length - 1);
+  const x = i => dates.length === 1 ? padL + cw / 2 : padL + (cw * i) / (dates.length - 1);
 
   ctx.clearRect(0, 0, W, H);
-  // 网格
   ctx.strokeStyle = '#f0f0f0'; ctx.fillStyle = '#aaa'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
   for (let g = 0; g <= 4; g++) {
     const v = minV + ((maxV - minV) * g) / 4;
@@ -385,20 +520,38 @@ function drawLineChart(canvas, pts) {
     ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(W - padR, yy); ctx.stroke();
     ctx.fillText(Math.round(v), padL - 5, yy + 3);
   }
-  // 折线
-  ctx.strokeStyle = '#2b6de8'; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.beginPath();
-  pts.forEach((p, i) => { i === 0 ? ctx.moveTo(x(i), y(p.value)) : ctx.lineTo(x(i), y(p.value)); });
-  ctx.stroke();
-  // 点 + 值
-  pts.forEach((p, i) => {
-    ctx.beginPath(); ctx.arc(x(i), y(p.value), 3.5, 0, Math.PI * 2); ctx.fillStyle = '#2b6de8'; ctx.fill();
-    ctx.fillStyle = '#333'; ctx.textAlign = 'center';
-    ctx.fillText(String(p.value), x(i), y(p.value) - 8);
-    ctx.fillStyle = '#999'; ctx.font = '9px sans-serif';
-    ctx.fillText(String(p.label || ''), x(i), H - 8);
+  // 每科一条折线（断点处理）
+  series.forEach(s => {
+    ctx.strokeStyle = s.color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    let drawing = false;
+    ctx.beginPath();
+    dates.forEach((d, i) => {
+      const p = s.data[d];
+      if (p) {
+        if (!drawing) { ctx.moveTo(x(i), y(p.value)); drawing = true; }
+        else ctx.lineTo(x(i), y(p.value));
+      } else drawing = false;
+    });
+    ctx.stroke();
   });
-  // 分数点的考试名（悬浮 title 用 data 已在调用处给 name）
-  canvas.title = pts.map(p => p.name + '：' + p.value).join('，');
+  // 数据点 + 分数
+  dates.forEach((d, i) => {
+    series.forEach(s => {
+      const p = s.data[d];
+      if (!p) return;
+      ctx.beginPath(); ctx.arc(x(i), y(p.value), 3.5, 0, Math.PI * 2); ctx.fillStyle = s.color; ctx.fill();
+      ctx.fillStyle = '#333'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(String(p.value), x(i), y(p.value) - 5);
+    });
+  });
+  // x 轴标签：日期 + 考试名
+  dates.forEach((d, i) => {
+    const names = [...new Set(series.map(s => (s.data[d] && s.data[d].name) || '').filter(Boolean))];
+    const label = (d.length >= 10 ? d.slice(5) : d) + (names[0] ? ' ' + names[0].slice(0, 5) : '');
+    ctx.fillStyle = '#999'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(label, x(i), H - 10);
+  });
+  canvas.title = series.map(s => s.label + '：' + dates.map(d => (s.data[d] ? (s.data[d].name || d) + ' ' + s.data[d].value : '')).filter(Boolean).join('，')).join(' | ');
 }
 
 /* ================= 排课 ================= */
@@ -410,6 +563,12 @@ function openCourseForm() {
     <div class="form-grid">
       <div class="form-row"><label>科目 *</label><input id="c-sub" type="text" placeholder="如：数学"></div>
       <div class="form-row"><label>老师</label><input id="c-teacher" type="text" placeholder="如：王老师"></div>
+    </div>
+    <div class="form-row"><label>课时类型（销课扣哪个）*</label>
+      <select id="c-lessontype">
+        <option value="purchase">购买课时</option>
+        <option value="bonus">赠送课时</option>
+      </select>
     </div>
     <div class="form-grid">
       <div class="form-row"><label>上课日期 *</label><input id="c-date" type="date" value="${todayStr()}"></div>
@@ -445,6 +604,7 @@ async function saveCourse() {
   if (!start) return alert('请选择开始时间');
   const teacher = $('#c-teacher').value.trim();
   const end = $('#c-end').value;
+  const lessonType = $('#c-lessontype').value;
   const repeat = $('#c-repeat').checked;
   const weeks = repeat ? Math.min(20, Math.max(1, Number($('#c-weeknum').value) || 8)) : 1;
   const rows = [];
@@ -454,7 +614,7 @@ async function saveCourse() {
     const d = new Date(base);
     d.setDate(d.getDate() + i * 7);
     const ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-    rows.push({ student_id: studentId, subject, teacher, course_date: ds, start_time: start, end_time: end, series_id: seriesId });
+    rows.push({ student_id: studentId, subject, teacher, course_date: ds, start_time: start, end_time: end, series_id: seriesId, lesson_type: lessonType });
   }
   try {
     await api('courses', { method: 'POST', body: rows });
@@ -488,7 +648,8 @@ function renderCourses() {
       const att = attendanceOf(c.id);
       return '<div class="course-row">' +
         '<div class="course-time">' + fmtTime(c.start_time) + '</div>' +
-        '<div class="course-info"><div class="list-title">' + (stu ? esc(stu.name) : '?') + ' · ' + esc(c.subject || '') + '</div>' +
+        '<div class="course-info"><div class="list-title">' + (stu ? esc(stu.name) : '?') + ' · ' + esc(c.subject || '') +
+        (c.lesson_type === 'bonus' ? ' <span class="badge badge-orange">🎁赠</span>' : '') + '</div>' +
         '<div class="list-sub">' + esc(c.teacher || '') + (c.series_id ? ' 🔁循环' : '') + '</div></div>' +
         (att ? '<span class="badge ' + STATUS_BADGE[att.status] + '">' + STATUS_NAMES[att.status] + '</span>' : '') +
         '<button class="btn btn-danger btn-sm" onclick="deleteCourse(' + c.id + ', ' + (c.series_id ? 'true' : 'false') + ')">删</button></div>';
@@ -497,15 +658,16 @@ function renderCourses() {
   }).join('');
 }
 async function deleteCourse(id, isSeries) {
-  const c = studentById(state.courses.find(x => x.id === id)?.student_id);
-  let msg = '确定删除这节课吗？\n（已签到的记录也会删除）';
+  const c = state.courses.find(x => x.id === id);
+  const stu = c ? studentById(c.student_id) : null;
+  let msg = '确定删除这节课吗？\n（已签到的记录也会删除，课时会退回）';
   if (isSeries) msg = '这是循环课中的一节。\n确定删除这节课吗？（只删这一节，不影响其他周）';
   if (!confirm(msg)) return;
   try {
     await api('courses?id=eq.' + id, { method: 'DELETE' });
     await loadAll();
     renderCourses();
-    if (c) await recalcLesson(c.id);
+    if (stu) await recalcLesson(stu.id);
   } catch (e) { alert('删除失败：' + e.message); }
 }
 
@@ -525,24 +687,24 @@ function renderAttendance() {
       const btn = (s, name) => '<button class="sign-btn' + (att && att.status === s ? ' active' : '') + '" data-s="' + s + '" onclick="signCourse(' + c.id + ', \'' + s + '\')">' + name + '</button>';
       return '<div class="course-row" style="align-items:flex-start;flex-wrap:wrap">' +
         '<div class="course-time">' + fmtTime(c.start_time) + '</div>' +
-        '<div class="course-info" style="flex-basis:calc(100% - 110px)"><div class="list-title">' + (stu ? esc(stu.name) : '?') + ' · ' + esc(c.subject || '') + '</div>' +
+        '<div class="course-info" style="flex-basis:calc(100% - 110px)"><div class="list-title">' + (stu ? esc(stu.name) : '?') + ' · ' + esc(c.subject || '') +
+        (c.lesson_type === 'bonus' ? ' <span class="badge badge-orange">🎁赠</span>' : '') + '</div>' +
         '<div class="list-sub">' + esc(c.teacher || '') + '</div></div>' +
         '<div class="sign-btns" style="width:100%;margin-top:4px;padding-left:0">' + btn('normal', '✅ 正常') + btn('late', '⏰ 迟到') + btn('leave', '💤 请假') + btn('absent', '🚫 缺勤') + '</div></div>';
     }).join('');
   }
 
-  // 当天签到记录
   const recs = state.attendance.filter(a => a.course_date === date).sort((a, b) => (a.signed_at || '').localeCompare(b.signed_at || ''));
   $('#att-records').innerHTML = !recs.length
     ? '<div class="card"><div class="empty">当天还没有签到记录</div></div>'
     : '<div class="card">' + recs.map(a => {
       const stu = studentById(a.student_id);
-      return '<div class="att-row"><div style="flex:1">' + (stu ? esc(stu.name) : '?') + '</div>' +
+      const c = state.courses.find(x => x.id === a.course_id);
+      return '<div class="att-row"><div style="flex:1">' + (stu ? esc(stu.name) : '?') + (c && c.lesson_type === 'bonus' ? ' 🎁' : '') + '</div>' +
         '<span class="badge ' + STATUS_BADGE[a.status] + '">' + STATUS_NAMES[a.status] + '</span>' +
         '<span class="muted">' + (a.signed_at ? a.signed_at.slice(11, 16) : '') + '</span></div>';
     }).join('') + '</div>';
 
-  // 历史记录（最近 60 条）
   const hist = state.attendance.filter(a => a.course_date !== date).slice(0, 60);
   $('#att-history').innerHTML = !hist.length
     ? '<div class="card"><div class="empty">暂无历史记录</div></div>'
@@ -574,12 +736,166 @@ async function recalcLesson(studentId) {
   const stu = studentById(studentId);
   if (!stu) return;
   const atts = state.attendance.filter(a => a.student_id === studentId);
-  const used = atts.filter(a => ['normal', 'late', 'absent'].includes(a.status)).length;
-  const remaining = Math.max(0, (stu.total_lessons || 0) - used);
+  let usedP = 0, usedB = 0;
+  atts.forEach(a => {
+    if (!['normal', 'late', 'absent'].includes(a.status)) return;
+    const c = state.courses.find(x => x.id === a.course_id);
+    if (c && c.lesson_type === 'bonus') usedB++; else usedP++;
+  });
+  const pr = Math.max(0, (stu.purchased_lessons || 0) - usedP);
+  const br = Math.max(0, (stu.bonus_lessons || 0) - usedB);
   try {
-    await api('students?id=eq.' + studentId, { method: 'PATCH', body: { remaining_lessons: remaining } });
-    stu.remaining_lessons = remaining;
+    await api('students?id=eq.' + studentId, { method: 'PATCH', body: { purchased_remaining: pr, bonus_remaining: br } });
+    stu.purchased_remaining = pr;
+    stu.bonus_remaining = br;
   } catch (e) {}
+}
+
+/* ================= 晚托管理 ================= */
+function setCareFilter(f) {
+  careFilter = f;
+  ['all', 'da', 'two', 'eight'].forEach(x => $('#care-tab-' + x).classList.toggle('active', x === f));
+  renderCare();
+}
+function renderCare() {
+  const dateInput = $('#care-date');
+  if (!dateInput.value) dateInput.value = todayStr();
+  const date = dateInput.value;
+  const dow = new Date(date + 'T00:00:00').getDay();
+  const isWeekend = dow === 0 || dow === 6;
+
+  // 签到区
+  if (isWeekend) {
+    $('#care-sign-list').innerHTML = '<div class="empty">今天是周末，晚托休息 🏖</div>';
+  } else {
+    const list = state.careStudents.slice();
+    if (careFilter !== 'all') {
+      $('#care-sign-list').innerHTML = list.filter(c => c.care_type === careFilter).length
+        ? list.filter(c => c.care_type === careFilter).map(c => careSignRow(c, date)).join('')
+        : '<div class="empty">该类型暂无晚托学生</div>';
+    } else {
+      $('#care-sign-list').innerHTML = list.length ? list.map(c => careSignRow(c, date)).join('') : '<div class="empty">晚托名单还是空的，点下方"＋ 添加晚托学生"</div>';
+    }
+  }
+
+  // 名单区（分组显示）
+  const groups = careFilter === 'all'
+    ? [['da', '大班晚托'], ['two', '两人晚托'], ['eight', '八人晚托']]
+    : [[careFilter, CARE_TYPE_NAMES[careFilter]]];
+  let html = '';
+  groups.forEach(([type, title]) => {
+    const members = state.careStudents.filter(c => c.care_type === type);
+    html += '<div class="group-title">🌙 ' + title + '（' + members.length + ' 人）</div>';
+    html += !members.length ? '<div class="card"><div class="empty">暂无学生</div></div>' :
+      members.map(c => {
+        const att = state.careAttendance.find(a => a.student_id === c.id && a.care_date === date);
+        return '<div class="care-card"><div class="care-info" style="cursor:pointer" onclick="openCareDetail(' + c.id + ')">' +
+          '<div class="list-title">' + esc(c.name) + ' <span class="badge badge-blue">' + esc(c.grade || '') + '</span></div>' +
+          '<div class="list-sub">' + esc(c.school || '') + (c.parent_phone ? ' ｜ ' + esc(c.parent_phone) : '') + '</div></div>' +
+          (att ? '<span class="badge ' + STATUS_BADGE[att.status] + '">' + CARE_STATUS_NAMES[att.status] + '</span>' : '') +
+          '<button class="btn btn-danger btn-sm" onclick="deleteCare(' + c.id + ')">删</button></div>';
+      }).join('');
+  });
+  $('#care-list').innerHTML = html;
+}
+function careSignRow(c, date) {
+  const att = state.careAttendance.find(a => a.student_id === c.id && a.care_date === date);
+  const btn = (s, name) => '<button class="sign-btn' + (att && att.status === s ? ' active' : '') + '" data-s="' + s + '" onclick="signCare(' + c.id + ', \'' + s + '\')">' + name + '</button>';
+  return '<div class="course-row" style="align-items:flex-start;flex-wrap:wrap">' +
+    '<div class="course-info" style="flex:1"><div class="list-title">' + esc(c.name) + ' <span class="badge ' + CARE_TYPE_BADGE[c.care_type] + '">' + CARE_TYPE_NAMES[c.care_type] + '</span></div>' +
+    '<div class="list-sub">' + esc(c.school || '') + '</div></div>' +
+    '<div class="sign-btns" style="width:100%;margin-top:4px">' + btn('normal', '✅ 已到') + btn('leave', '💤 请假') + btn('absent', '🚫 未到') + '</div></div>';
+}
+async function signCare(studentId, status) {
+  const date = $('#care-date').value || todayStr();
+  const existing = state.careAttendance.find(a => a.student_id === studentId && a.care_date === date);
+  try {
+    if (existing) {
+      await api('care_attendance?id=eq.' + existing.id, { method: 'PATCH', body: { status, signed_at: new Date().toISOString() } });
+    } else {
+      await api('care_attendance', { method: 'POST', body: { student_id: studentId, care_date: date, status } });
+    }
+    await loadAll();
+    renderCare();
+  } catch (e) { alert('签到失败：' + e.message); }
+}
+function openCareForm(id) {
+  const c = id ? careById(id) : null;
+  const f = id ? c : { name: '', grade: '', school: '', parent_phone: '', care_type: 'da', notes: '' };
+  openModal(id ? '编辑晚托学生' : '添加晚托学生', `
+    <div class="form-row"><label>姓名 *</label><input id="cf-name" type="text" value="${esc(f.name)}"></div>
+    <div class="form-grid">
+      <div class="form-row"><label>年级</label><input id="cf-grade" type="text" value="${esc(f.grade)}"></div>
+      <div class="form-row"><label>学校</label><input id="cf-school" type="text" value="${esc(f.school)}"></div>
+    </div>
+    <div class="form-row"><label>家长电话</label><input id="cf-phone" type="tel" value="${esc(f.parent_phone)}"></div>
+    <div class="form-row"><label>晚托类型 *</label>
+      <select id="cf-type">
+        <option value="da" ${f.care_type === 'da' || !f.care_type ? 'selected' : ''}>大班晚托</option>
+        <option value="two" ${f.care_type === 'two' ? 'selected' : ''}>两人晚托</option>
+        <option value="eight" ${f.care_type === 'eight' ? 'selected' : ''}>八人晚托</option>
+      </select>
+    </div>
+    <div class="form-row"><label>备注</label><textarea id="cf-notes" rows="2">${esc(f.notes)}</textarea></div>
+    <button class="btn btn-primary btn-block" onclick="saveCare(${id || 'null'})">保存</button>
+  `);
+}
+async function saveCare(id) {
+  const data = {
+    name: $('#cf-name').value.trim(),
+    grade: $('#cf-grade').value.trim(),
+    school: $('#cf-school').value.trim(),
+    parent_phone: $('#cf-phone').value.trim(),
+    care_type: $('#cf-type').value,
+    notes: $('#cf-notes').value.trim(),
+  };
+  if (!data.name) return alert('请填写姓名');
+  try {
+    if (id) await api('care_students?id=eq.' + id, { method: 'PATCH', body: data });
+    else await api('care_students', { method: 'POST', body: data });
+    await loadAll();
+    closeModal();
+    renderCare();
+  } catch (e) { alert('保存失败：' + e.message); }
+}
+async function deleteCare(id) {
+  if (!confirm('确定把该学生从晚托名单删除吗？（其晚托签到记录也会删除）')) return;
+  try {
+    await api('care_students?id=eq.' + id, { method: 'DELETE' });
+    await loadAll();
+    renderCare();
+  } catch (e) { alert('删除失败：' + e.message); }
+}
+function openCareDetail(id) {
+  const c = careById(id);
+  if (!c) return;
+  const recs = state.careAttendance.filter(a => a.student_id === id).sort((a, b) => (b.care_date || '').localeCompare(a.care_date || ''));
+  const monthRecs = recs.slice(0, 30).map(a =>
+    '<div class="att-row"><div style="min-width:84px;font-weight:600">' + fmtDate(a.care_date) + '</div>' +
+    '<div style="flex:1">' + weekdayOf(a.care_date) + '</div>' +
+    '<span class="badge ' + STATUS_BADGE[a.status] + '">' + CARE_STATUS_NAMES[a.status] + '</span></div>'
+  ).join('');
+  openModal(esc(c.name) + ' 的晚托档案', `
+    <div class="card" style="box-shadow:none;padding:0">
+      <div class="list-item"><div class="list-main">
+        <div class="list-title">${esc(c.name)} <span class="badge ${CARE_TYPE_BADGE[c.care_type]}">${CARE_TYPE_NAMES[c.care_type]}</span> <span class="badge badge-blue">${esc(c.grade || '')}</span></div>
+        <div class="list-sub">学校：${esc(c.school || '')}</div>
+        <div class="list-sub">家长电话：${esc(c.parent_phone || '')}</div>
+        ${c.notes ? '<div class="list-sub">备注：' + esc(c.notes) + '</div>' : ''}
+      </div></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-gray btn-sm" onclick="openCareForm(${id})">✏️ 编辑</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteCare(${id})">🗑 删除</button>
+      </div>
+    </div>
+    <div class="section-title">🗓 最近晚托签到</div>
+    ${recs.length ? '<div class="card">' + monthRecs + '</div>' : '<div class="card"><div class="empty">暂无签到记录</div></div>'}
+  `);
+}
+const WEEK_CN = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+function weekdayOf(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return isNaN(d.getTime()) ? '' : WEEK_CN[d.getDay()];
 }
 
 /* ================= 工作计划 ================= */
@@ -664,22 +980,17 @@ function downloadCSV(filename, rows) {
   a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
 }
-const WEEK_CN = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-function weekdayOf(dateStr) {
-  const d = new Date(dateStr + 'T00:00:00');
-  return isNaN(d.getTime()) ? '' : WEEK_CN[d.getDay()];
-}
 function exportCoursesCSV() {
   const today = todayStr();
   let list = state.courses.slice();
   if (courseFilter === 'future') list = list.filter(c => c.course_date >= today);
   list.sort((a, b) => (a.course_date + (a.start_time || '')).localeCompare(b.course_date + (b.start_time || '')));
   if (!list.length) return alert('当前没有可导出的课程');
-  const rows = [['日期', '星期', '开始时间', '结束时间', '学生', '科目', '老师', '签到状态']];
+  const rows = [['日期', '星期', '开始时间', '结束时间', '学生', '科目', '老师', '课时类型', '签到状态']];
   list.forEach(c => {
     const stu = studentById(c.student_id);
     const att = attendanceOf(c.id);
-    rows.push([c.course_date, weekdayOf(c.course_date), fmtTime(c.start_time), fmtTime(c.end_time), stu ? stu.name : '', c.subject || '', c.teacher || '', att ? STATUS_NAMES[att.status] : '未签到']);
+    rows.push([c.course_date, weekdayOf(c.course_date), fmtTime(c.start_time), fmtTime(c.end_time), stu ? stu.name : '', c.subject || '', c.teacher || '', c.lesson_type === 'bonus' ? '赠送' : '购买', att ? STATUS_NAMES[att.status] : '未签到']);
   });
   downloadCSV('课表_' + today + '.csv', rows);
   alert('已导出 ' + list.length + ' 条课程，表格文件已下载（可用 Excel / WPS 打开）');
@@ -688,11 +999,11 @@ function exportAttendanceCSV() {
   const date = $('#att-date').value || todayStr();
   const recs = state.attendance.filter(a => a.course_date === date).sort((a, b) => (a.signed_at || '').localeCompare(b.signed_at || ''));
   if (!recs.length) return alert('这一天没有签到记录');
-  const rows = [['日期', '学生', '科目', '签到状态', '签到时间']];
+  const rows = [['日期', '学生', '科目', '课时类型', '签到状态', '签到时间']];
   recs.forEach(a => {
     const stu = studentById(a.student_id);
     const c = state.courses.find(x => x.id === a.course_id);
-    rows.push([a.course_date, stu ? stu.name : '', c ? c.subject : '', STATUS_NAMES[a.status], a.signed_at ? a.signed_at.slice(0, 16).replace('T', ' ') : '']);
+    rows.push([a.course_date, stu ? stu.name : '', c ? c.subject : '', c && c.lesson_type === 'bonus' ? '赠送' : '购买', STATUS_NAMES[a.status], a.signed_at ? a.signed_at.slice(0, 16).replace('T', ' ') : '']);
   });
   downloadCSV('签到记录_' + date + '.csv', rows);
   alert('已导出 ' + recs.length + ' 条签到记录，表格文件已下载（可用 Excel / WPS 打开）');
