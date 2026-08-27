@@ -41,6 +41,31 @@ function fmtTime(t) {
   if (!t) return '';
   return t.length >= 5 ? t.slice(0, 5) : t;
 }
+/* 把云端存的 UTC 时间转为本地（北京时间）显示，只取 "时:分" */
+function fmtLocalHM(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  } catch (e) { return iso; }
+}
+/* 判断某 UTC 时间戳落在本地时区的哪一天（YYYY-MM-DD），并显示月-日 时:分 */
+function fmtLocalDateTime(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + ' ' +
+      String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  } catch (e) { return iso; }
+}
+function localDateOf(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -745,7 +770,7 @@ function renderAttendance() {
       const c = state.courses.find(x => x.id === a.course_id);
       return '<div class="att-row"><div style="flex:1">' + (stu ? esc(stu.name) : '?') + (c && c.lesson_type === 'bonus' ? ' 🎁' : '') + '</div>' +
         '<span class="badge ' + STATUS_BADGE[a.status] + '">' + STATUS_NAMES[a.status] + '</span>' +
-        '<span class="muted">' + (a.signed_at ? a.signed_at.slice(11, 16) : '') + '</span></div>';
+        '<span class="muted">' + (a.signed_at ? fmtLocalHM(a.signed_at) : '') + '</span></div>';
     }).join('') + '</div>';
 
   const hist = state.attendance.filter(a => a.course_date !== date).slice(0, 60);
@@ -756,7 +781,7 @@ function renderAttendance() {
       return '<div class="att-row"><div style="min-width:84px;font-weight:600">' + fmtDate(a.course_date) + '</div>' +
         '<div style="flex:1">' + (stu ? esc(stu.name) : '?') + '</div>' +
         '<span class="badge ' + STATUS_BADGE[a.status] + '">' + STATUS_NAMES[a.status] + '</span>' +
-        '<span class="muted">' + (a.signed_at ? a.signed_at.slice(11, 16) : '') + '</span></div>';
+        '<span class="muted">' + (a.signed_at ? fmtLocalHM(a.signed_at) : '') + '</span></div>';
     }).join('') + '</div>';
 }
 
@@ -848,7 +873,7 @@ function careSignRow(c, date) {
     '<div class="course-info" style="flex:1"><div class="list-title">' + esc(c.name) + ' <span class="badge ' + CARE_TYPE_BADGE[c.care_type] + '">' + CARE_TYPE_NAMES[c.care_type] + '</span></div>' +
     '<div class="list-sub">' + esc(c.school || '') + '</div></div>' +
     '<div class="sign-btns" style="width:100%;margin-top:4px">' + btn('normal', '✅ 已到') + btn('leave', '💤 请假') + btn('absent', '🚫 未到') + '</div>' +
-    (att && att.signed_at ? '<div class="muted" style="width:100%">🕐 签到时间：' + att.signed_at.slice(11, 16) + '</div>' : '') + '</div>';
+    (att && att.signed_at ? '<div class="muted" style="width:100%">🕐 签到时间：' + fmtLocalHM(att.signed_at) + '</div>' : '') + '</div>';
 }
 async function signCare(studentId, status) {
   const date = $('#care-date').value || todayStr();
@@ -941,7 +966,7 @@ function openCareDetail(id) {
   };
   const monthRecs = recs.slice(0, 30).map(a =>
     '<div class="att-row"><div style="min-width:84px;font-weight:600">' + fmtDate(a.care_date) + '</div>' +
-    '<div style="flex:1">' + weekdayOf(a.care_date) + (a.signed_at ? '<span class="muted"> ' + a.signed_at.slice(11, 16) + '</span>' : '') + '</div>' +
+    '<div style="flex:1">' + weekdayOf(a.care_date) + (a.signed_at ? '<span class="muted"> ' + fmtLocalHM(a.signed_at) + '</span>' : '') + '</div>' +
     (tasksOf(a) ? '<span class="badge badge-green">' + tasksOf(a) + '</span>' : '') +
     '<span class="badge ' + STATUS_BADGE[a.status] + '">' + CARE_STATUS_NAMES[a.status] + '</span></div>'
   ).join('');
@@ -1022,7 +1047,7 @@ function planRow(p, showEdit) {
       '<button class="btn btn-danger btn-sm" onclick="deletePlan(' + p.id + ')">删</button>';
   return '<div class="plan-item">' + btn +
     '<div class="plan-title' + (isDone ? ' finished' : (over ? ' over' : '')) + '"><div class="plan-name">' + esc(p.title) + '</div>' +
-    '<div class="muted">' + (isDone ? '完成 ' + (p.completed_at ? p.completed_at.replace('T', ' ').slice(5, 16) : '') : (p.due_date ? '截止 ' + fmtDate(p.due_date) + (over ? ' ⚠️已过期' : '') : '无截止日期')) + '</div></div>' +
+    '<div class="muted">' + (isDone ? '完成 ' + (p.completed_at ? fmtLocalDateTime(p.completed_at) : '') : (p.due_date ? '截止 ' + fmtDate(p.due_date) + (over ? ' ⚠️已过期' : '') : '无截止日期')) + '</div></div>' +
     '<div class="plan-actions">' + actions + '</div></div>';
 }
 function planEmpty() { return '<div class="empty">暂无计划</div>'; }
@@ -1040,8 +1065,8 @@ function renderPlans() {
   const editedPending = pending.filter(p => p.edited_at && p.due_date !== today && p.due_date !== tomorrowStr);
   const otherPending = pending.filter(p => !p.edited_at && p.due_date !== today && p.due_date !== tomorrowStr);
 
-  const todayDone = done.filter(p => p.completed_at && p.completed_at.slice(0, 10) === today);
-  const otherDone = done.filter(p => !(p.completed_at && p.completed_at.slice(0, 10) === today));
+  const todayDone = done.filter(p => p.completed_at && localDateOf(p.completed_at) === today);
+  const otherDone = done.filter(p => !(p.completed_at && localDateOf(p.completed_at) === today));
 
   const sortP = list => list.slice().sort((a, b) => impRank(a) - impRank(b) || (a.due_date || '').localeCompare(b.due_date || ''));
   const sortD = list => list.slice().sort((a, b) => (b.completed_at || b.due_date || '').localeCompare(a.completed_at || a.due_date || ''));
@@ -1113,7 +1138,7 @@ function exportAttendanceCSV() {
   recs.forEach(a => {
     const stu = studentById(a.student_id);
     const c = state.courses.find(x => x.id === a.course_id);
-    rows.push([a.course_date, stu ? stu.name : '', c ? c.subject : '', c && c.lesson_type === 'bonus' ? '赠送' : '购买', STATUS_NAMES[a.status], a.signed_at ? a.signed_at.slice(0, 16).replace('T', ' ') : '']);
+    rows.push([a.course_date, stu ? stu.name : '', c ? c.subject : '', c && c.lesson_type === 'bonus' ? '赠送' : '购买', STATUS_NAMES[a.status], a.signed_at ? fmtLocalDateTime(a.signed_at) : '']);
   });
   downloadCSV('签到记录_' + date + '.csv', rows);
   alert('已导出 ' + recs.length + ' 条签到记录，表格文件已下载（可用 Excel / WPS 打开）');
