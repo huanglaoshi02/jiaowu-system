@@ -274,6 +274,18 @@ input:focus, select:focus, textarea:focus { border-color: #2b6de8; }
     <!-- 工作计划 -->
     <section id="page-plans" class="page" style="display:none">
       <button class="btn btn-primary btn-block" onclick="openPlanForm()">＋ 添加工作计划</button>
+
+      <!-- 今天 / 明天 快捷分组 -->
+      <div class="section-title">📌 今日工作计划 <span id="plan-today-label" class="muted"></span></div>
+      <div class="card"><div id="plan-today-pending"></div></div>
+      <div class="section-title">💪 今日已完成</div>
+      <div class="card"><div id="plan-today-done"></div></div>
+      <div class="section-title">⏰ 明日工作计划</div>
+      <div class="card"><div id="plan-tomorrow"></div></div>
+
+      <!-- 完整状态分组 -->
+      <div class="section-title">✏️ 已修改</div>
+      <div class="card"><div id="plan-edited"></div></div>
       <div class="section-title">⏳ 待完成</div>
       <div class="card"><div id="plan-pending"></div></div>
       <div class="section-title">✅ 已完成</div>

@@ -973,57 +973,85 @@ function weekdayOf(dateStr) {
 
 /* ================= 工作计划 ================= */
 function impRank(p) { return p.importance === 'high' ? 0 : p.importance === 'medium' ? 1 : 2; }
-function openPlanForm() {
-  openModal('添加工作计划', `
-    <div class="form-row"><label>计划内容 *</label><input id="p-title" type="text" placeholder="如：本周给家长反馈学生情况"></div>
+function openPlanForm(id) {
+  const p = id ? state.plans.find(x => x.id === id) : null;
+  openModal(id ? '编辑工作计划' : '添加工作计划', `
+    <div class="form-row"><label>计划内容 *</label><input id="p-title" type="text" value="${p ? esc(p.title) : ''}" placeholder="如：本周给家长反馈学生情况"></div>
     <div class="form-grid">
-      <div class="form-row"><label>截止日期</label><input id="p-date" type="date" value="${todayStr()}"></div>
+      <div class="form-row"><label>截止日期</label><input id="p-date" type="date" value="${p ? esc(p.due_date || '') : todayStr()}"></div>
       <div class="form-row"><label>重要程度</label>
         <select id="p-imp">
-          <option value="high">🔴 高</option>
-          <option value="medium" selected>🟠 中</option>
-          <option value="low">⚪ 低</option>
+          <option value="high" ${p && p.importance === 'high' ? 'selected' : ''}>🔴 高</option>
+          <option value="medium" ${!p || p.importance === 'medium' ? 'selected' : ''}>🟠 中</option>
+          <option value="low" ${p && p.importance === 'low' ? 'selected' : ''}>⚪ 低</option>
         </select>
       </div>
     </div>
-    <button class="btn btn-primary btn-block" onclick="savePlan()">保存计划</button>
+    <button class="btn btn-primary btn-block" onclick="savePlan(${id || 'null'})">保存计划</button>
   `);
 }
-async function savePlan() {
+async function savePlan(id) {
   const title = $('#p-title').value.trim();
   if (!title) return alert('请填写计划内容');
+  const data = {
+    title,
+    due_date: $('#p-date').value,
+    importance: $('#p-imp').value,
+  };
   try {
-    await api('plans', { method: 'POST', body: { title, due_date: $('#p-date').value, importance: $('#p-imp').value, status: 'pending' } });
+    if (id) {
+      data.edited_at = new Date().toISOString();
+      await api('plans?id=eq.' + id, { method: 'PATCH', body: data });
+    } else {
+      await api('plans', { method: 'POST', body: { ...data, status: 'pending' } });
+    }
     await loadAll();
     closeModal();
     renderPlans();
   } catch (e) { alert('保存失败：' + e.message); }
 }
+function planRow(p) {
+  const today = todayStr();
+  const over = p.due_date && p.due_date < today;
+  const btn = '<button class="plan-check' + (p.status === 'done' ? ' done' : '') + '" onclick="togglePlan(' + p.id + ')">✓</button>';
+  return btn +
+    '<div class="plan-title' + (p.status === 'done' ? ' finished' : (over ? ' over' : '')) + '">' + esc(p.title) +
+    '<div class="muted">' + (p.due_date ? '截止 ' + fmtDate(p.due_date) + (over && p.status !== 'done' ? ' ⚠️已过期' : '') : '无截止日期') +
+    (p.status === 'done' && p.completed_at ? ' ｜ 完成：' + p.completed_at.replace('T', ' ').slice(5, 16) : '') + '</div></div>' +
+    '<span class="badge ' + IMP_CLS[p.importance] + '">' + IMP_NAMES[p.importance] + '</span>' +
+    '<button class="btn btn-gray btn-sm" onclick="openPlanForm(' + p.id + ')">✏️</button>' +
+    '<button class="btn btn-danger btn-sm" onclick="deletePlan(' + p.id + ')">删</button>';
+}
+function planEmpty() { return '<div class="empty">暂无计划</div>'; }
 function renderPlans() {
   const today = todayStr();
+  const tomorrow = new Date(new Date(today + 'T00:00:00').getTime() + 86400000);
+  const tomorrowStr = tomorrow.getFullYear() + '-' + String(tomorrow.getMonth() + 1).padStart(2, '0') + '-' + String(tomorrow.getDate()).padStart(2, '0');
+  $('#plan-today-label').textContent = '(' + today.slice(5) + ')';
+
   const pending = state.plans.filter(p => p.status !== 'done').sort((a, b) => impRank(a) - impRank(b) || (a.due_date || '').localeCompare(b.due_date || ''));
   const done = state.plans.filter(p => p.status === 'done');
-  $('#plan-pending').innerHTML = !pending.length
-    ? '<div class="empty">暂无待完成计划</div>'
-    : pending.map(p =>
-      '<div class="plan-item"><button class="plan-check" onclick="togglePlan(' + p.id + ')">✓</button>' +
-      '<div class="plan-title' + (p.due_date && p.due_date < today ? ' over' : '') + '">' + esc(p.title) + '<div class="muted">' + (p.due_date ? '截止 ' + fmtDate(p.due_date) + (p.due_date < today ? ' ⚠️已过期' : '') : '无截止日期') + '</div></div>' +
-      '<span class="badge ' + IMP_CLS[p.importance] + '">' + IMP_NAMES[p.importance] + '</span>' +
-      '<button class="btn btn-danger btn-sm" onclick="deletePlan(' + p.id + ')">删</button></div>'
-    ).join('');
-  $('#plan-done').innerHTML = !done.length
-    ? '<div class="empty">还没有完成的计划</div>'
-    : done.map(p =>
-      '<div class="plan-item"><button class="plan-check done" onclick="togglePlan(' + p.id + ')">✓</button>' +
-      '<div class="plan-title finished">' + esc(p.title) + '</div>' +
-      '<button class="btn btn-danger btn-sm" onclick="deletePlan(' + p.id + ')">删</button></div>'
-    ).join('');
+  const edited = state.plans.filter(p => p.edited_at).sort((a, b) => (b.edited_at || '').localeCompare(a.edited_at || ''));
+
+  const todayPending = pending.filter(p => p.due_date === today);
+  const todayDone = done.filter(p => p.completed_at && p.completed_at.slice(0, 10) === today);
+  const tomorrowPending = pending.filter(p => p.due_date === tomorrowStr);
+
+  $('#plan-today-pending').innerHTML = todayPending.length ? todayPending.map(planRow).join('') : planEmpty();
+  $('#plan-today-done').innerHTML = todayDone.length ? todayDone.map(planRow).join('') : planEmpty();
+  $('#plan-tomorrow').innerHTML = tomorrowPending.length ? tomorrowPending.map(planRow).join('') : planEmpty();
+  $('#plan-edited').innerHTML = edited.length ? edited.slice(0, 30).map(planRow).join('') : planEmpty();
+  $('#plan-pending').innerHTML = pending.length ? pending.map(planRow).join('') : planEmpty();
+  $('#plan-done').innerHTML = done.length ? done.map(planRow).join('') : planEmpty();
 }
 async function togglePlan(id) {
   const p = state.plans.find(x => x.id === id);
   if (!p) return;
+  const isDone = p.status === 'done';
+  const body = { status: isDone ? 'pending' : 'done' };
+  if (!isDone) body.completed_at = new Date().toISOString();
   try {
-    await api('plans?id=eq.' + id, { method: 'PATCH', body: { status: p.status === 'done' ? 'pending' : 'done' } });
+    await api('plans?id=eq.' + id, { method: 'PATCH', body });
     await loadAll();
     renderPlans();
     renderHome();
